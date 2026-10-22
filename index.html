@@ -181,6 +181,7 @@ details.mais > summary:focus-visible { outline: 3px solid var(--tape); outline-o
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 <script>
 /* ===== Núcleo: mesmas regras da skill ordenar-etiquetas-por-sku ===== */
 /* SKU = pedaços de letras/números ligados por hífen (aceita também . _ / dentro dos pedaços, para SKUs novos). */
@@ -318,7 +319,10 @@ function analisar(textos) {
     const primeiraLinha = norm((textos[e].stream.split('\n').find(l => l.trim()) || '')).trim().toUpperCase();
     const okChave = !!chave && etCompacta.includes(chave);
     const okSku = skus.length > 0 && (skus.includes(primeiraLinha) || skus.some(s => etCompacta.includes(s)));
+    // Etiqueta que é só imagem (sem texto): a conferência é feita depois, pelo código de barras
+    const etiquetaImagem = etCompacta.length < 15;
     blocos.push({
+      etqPage: e, etiquetaImagem,
       pages: [a, b], skus, chave, orig: blocos.length,
       danfePrimeiro: isD[a],
       ...(() => {
@@ -329,16 +333,19 @@ function analisar(textos) {
       qtdEtiqueta: qtdDaEtiqueta(textos[e].stream) ?? qtdDaEtiqueta(textos[e].visual),
       prova: okChave ? 'chave' : okSku ? 'sku' : null,
       ok: okChave || okSku,
-      semConferencia: !(okChave || okSku) && !skus.length,
+      semConferencia: !(okChave || okSku) && !skus.length && !etiquetaImagem,
       descricao: descricaoDaDanfe(textos[d].stream) || descricaoDaDanfe(textos[d].visual),
     });
   }
   if (foraDoPadrao.length) {
     return { erros: ['As páginas não alternam entre etiqueta e DANFE em: ' + foraDoPadrao.join(', ') + '. Nada foi gerado.'] };
   }
-  const plataforma = dPrimeiro > ePrimeiro ? 'tiktok' : 'shopee';
+  // Plataforma pelo conteúdo da etiqueta (a ordem DANFE/etiqueta não serve: a Shopee também manda a DANFE primeiro)
+  const textoEtiquetas = blocos.map(b => textos[b.etqPage].stream + ' ' + textos[b.etqPage].visual).join(' ');
+  const plataforma = /imile|tiktok/i.test(textoEtiquetas) ? 'tiktok'
+    : (/shopee|qtd:/i.test(textoEtiquetas) || blocos.some(b => b.etiquetaImagem)) ? 'shopee' : null;
   const formatoMisto = dPrimeiro > 0 && ePrimeiro > 0;
-  const paresRuins = blocos.filter(b => !b.ok && !b.semConferencia);
+  const paresRuins = blocos.filter(b => !b.ok && !b.semConferencia && !b.etiquetaImagem);
   for (const b of blocos) b.key = chaveOrdenacao(b);
   const ordenados = blocos.slice().sort((x, y) => compararChaves(x.key, y.key));
   return { erros: [], plataforma, formatoMisto, blocos, ordenados, paresRuins };
@@ -397,13 +404,60 @@ async function assinaturas(PDFLib, doc) {
   return sigs;
 }
 
+/* Lê a chave de acesso (44 dígitos) no código de barras de uma etiqueta que é só imagem.
+   Varre faixas horizontais de baixo para cima e só aceita um código com 44 dígitos. */
+function lerChaveDePixels(ZX, cinza, w, h) {
+  const hints = new Map();
+  hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [ZX.BarcodeFormat.CODE_128]);
+  hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+  const reader = new ZX.MultiFormatReader();
+  reader.setHints(hints);
+  const achadas = new Set();
+  const tentar = (y0, alt) => {
+    y0 = Math.max(0, Math.round(y0)); alt = Math.min(h - y0, Math.round(alt));
+    if (alt < 10) return null;
+    const faixa = new Uint8ClampedArray(w * alt);
+    faixa.set(cinza.subarray(y0 * w, (y0 + alt) * w));
+    for (const Bin of [ZX.HybridBinarizer, ZX.GlobalHistogramBinarizer]) {
+      try {
+        const src = new ZX.RGBLuminanceSource(faixa, w, alt);
+        const res = reader.decode(new ZX.BinaryBitmap(new Bin(src)), hints);
+        const t = (res.getText() || '').replace(/\D/g, '');
+        if (t.length === 44) return t;
+        if (t) achadas.add(t);
+      } catch (e) { /* nada nesta faixa */ }
+    }
+    return null;
+  };
+  const alt = h * 0.12;
+  for (let y = h - alt; y > h * 0.3; y -= alt / 2) {
+    const k = tentar(y, alt);
+    if (k) return k;
+  }
+  return null;
+}
+
 /* Processo completo para um arquivo. */
-async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
+async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg, opts = {}) {
   const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
   const textos = await extrairTextos(doc, (i, n) => onProg && onProg('Lendo página ' + i + ' de ' + n));
   const r = analisar(textos);
   r.paginas = textos.length;
-  if (r.erros.length || r.paresRuins.length) return r;
+  if (r.erros.length) return r;
+  // Etiquetas que são só imagem: lê a chave de acesso no código de barras e compara com a DANFE
+  const imgs = r.blocos.filter(b => !b.ok && b.etiquetaImagem);
+  for (let i = 0; i < imgs.length; i++) {
+    const b = imgs[i];
+    onProg && onProg(`Lendo o código de barras da etiqueta ${i + 1} de ${imgs.length}`);
+    let k = null;
+    try { k = opts.lerChave ? await opts.lerChave(doc, b.etqPage) : null; } catch (e) { k = null; }
+    b.chaveEtiqueta = k;
+    if (k && b.chave && k === b.chave) { b.ok = true; b.prova = 'codigo'; }
+    else if (k && b.chave) { b.codigoDiferente = true; r.paresRuins.push(b); }
+    else b.naoLido = true;
+  }
+  if (r.paresRuins.length) { try { doc.destroy(); } catch (e) {} return r; }
+  try { doc.destroy(); } catch (e) {}
   onProg && onProg('Montando o PDF ordenado');
   const { bytes: saida, src } = await gerarPdf(PDFLib, bytes.slice(), r.ordenados);
 
@@ -426,10 +480,12 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
     const mesmoPar = sigOut[novas[0]] === sigSrc[b.pages[0]] && sigOut[novas[1]] === sigSrc[b.pages[1]];
     const mesmaChave = !!o && o.chave === b.chave;
     const mesmoSku = !!o && o.skus.join('|') === b.skus.join('|');
-    const conferidoNoNovo = !!o && (o.prova !== null || b.semConferencia);
+    const viaCodigo = !!o && o.etiquetaImagem && mesmoPar && (b.prova === 'codigo' || b.naoLido);
+    const conferidoNoNovo = !!o && (o.prova !== null || b.semConferencia || viaCodigo);
     return {
       pedido: i + 1, novas: novas.map(x => x + 1), originais: b.pages.map(x => x + 1),
-      skus: b.skus, chave: b.chave, prova: o ? o.prova : null, danfePrimeiro: b.danfePrimeiro,
+      skus: b.skus, chave: b.chave, prova: o ? (o.prova ?? (b.prova === 'codigo' ? 'codigo' : null)) : null, danfePrimeiro: b.danfePrimeiro,
+      naoLido: !!b.naoLido,
       semConferencia: b.semConferencia, descricao: b.descricao,
       itens: b.itens, unidades: b.unidades, qtdEtiqueta: b.qtdEtiqueta,
       qtdDivergente: b.unidades !== null && b.qtdEtiqueta !== null && b.unidades !== b.qtdEtiqueta,
@@ -485,11 +541,13 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
     if (c.semConferencia && !c.prova) return 'Sem SKU e sem chave para cruzar. Veja as páginas.';
     if (c.prova === 'chave') return `Chave de acesso …${esc((c.chave || '').slice(-8))} da DANFE está impressa na etiqueta`;
     if (c.prova === 'sku') return 'O SKU da etiqueta é o mesmo da DANFE';
+    if (c.prova === 'codigo') return `Código de barras da etiqueta tem a chave …${esc((c.chave || '').slice(-8))}, igual à da DANFE`;
+    if (c.naoLido) return 'Etiqueta sem texto e código de barras não lido. Veja as páginas.';
     return 'Não foi possível cruzar';
   }
   function statusConf(c) {
     if (!c.ok) return '<span class="pill bad">✗ Erro</span>';
-    if (c.semConferencia && !c.prova) return '<span class="pill warn">Conferir à mão</span>';
+    if ((c.semConferencia && !c.prova) || c.naoLido) return '<span class="pill warn">Conferir à mão</span>';
     return '<span class="pill ok">✓ Conferido</span>';
   }
 
@@ -540,8 +598,8 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
     const q = v => '"' + String(v).replace(/"/g, '""') + '"';
     const linhas = [['pedido', 'paginas_pdf_novo', 'paginas_original', 'itens', 'unidades', 'qtd_na_etiqueta', 'chave_de_acesso', 'conferido_por', 'status'].join(';')];
     for (const c of r.conferencia) {
-      const st = !c.ok ? 'ERRO' : c.qtdDivergente ? 'QTD DIFERENTE NA ETIQUETA' : (c.semConferencia && !c.prova) ? 'CONFERIR A MAO' : c.unidades > 1 ? 'OK - ' + c.unidades + ' UNIDADES' : 'OK';
-      linhas.push([c.pedido, c.novas.join(' + '), c.originais.join(' + '), (c.itens && c.itens.length ? c.itens.map(it => it.sku + ' x' + (it.qtd ?? '?')).join(' + ') : c.skus.join(' + ')) || 'sem SKU', c.unidades ?? '', c.qtdEtiqueta ?? '', c.chave ? "'" + c.chave : '', c.prova === 'chave' ? 'chave de acesso na etiqueta' : c.prova === 'sku' ? 'SKU na etiqueta' : 'nao cruzado', st].map(q).join(';'));
+      const st = !c.ok ? 'ERRO' : c.qtdDivergente ? 'QTD DIFERENTE NA ETIQUETA' : ((c.semConferencia && !c.prova) || c.naoLido) ? 'CONFERIR A MAO' : c.unidades > 1 ? 'OK - ' + c.unidades + ' UNIDADES' : 'OK';
+      linhas.push([c.pedido, c.novas.join(' + '), c.originais.join(' + '), (c.itens && c.itens.length ? c.itens.map(it => it.sku + ' x' + (it.qtd ?? '?')).join(' + ') : c.skus.join(' + ')) || 'sem SKU', c.unidades ?? '', c.qtdEtiqueta ?? '', c.chave ? "'" + c.chave : '', c.prova === 'chave' ? 'chave de acesso na etiqueta' : c.prova === 'sku' ? 'SKU na etiqueta' : c.prova === 'codigo' ? 'codigo de barras da etiqueta' : 'nao cruzado', st].map(q).join(';'));
     }
     return '\ufeff' + linhas.join('\r\n');
   }
@@ -571,7 +629,30 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
     box.querySelectorAll('canvas').forEach(cv => io ? io.observe(cv) : desenhar(cv));
   }
 
-  function nomeSaida(r) { return `etiquetas_${r.plataforma}_ordenadas_por_SKU.pdf`; }
+  /* Desenha a página da etiqueta e lê o código de barras com a chave de acesso */
+  async function lerChave(doc, idx) {
+    if (!window.ZXing) return null;
+    const page = await doc.getPage(idx + 1);
+    const base = page.getViewport({ scale: 1 });
+    for (const largura of [1200, 1800]) {
+      const vp = page.getViewport({ scale: largura / base.width });
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+      const ctx = cv.getContext('2d', { willReadFrequently: true });
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      const px = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      const cinza = new Uint8ClampedArray(cv.width * cv.height);
+      for (let i = 0; i < cinza.length; i++) cinza[i] = (px[4 * i] * 299 + px[4 * i + 1] * 587 + px[4 * i + 2] * 114) / 1000;
+      const k = lerChaveDePixels(window.ZXing, cinza, cv.width, cv.height);
+      cv.width = cv.height = 0;
+      if (k) { page.cleanup(); return k; }
+    }
+    page.cleanup();
+    return null;
+  }
+
+  function nomeSaida(r) { return r.plataforma ? `etiquetas_${r.plataforma}_ordenadas_por_SKU.pdf` : 'etiquetas_ordenadas_por_SKU.pdf'; }
 
   function render(card, r, arquivo, exemplo) {
     const chip = r.plataforma ? `<span class="chip">${NOME_PLAT[r.plataforma]}</span>` : '';
@@ -583,12 +664,12 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
     }
     if (r.paresRuins.length) {
       html += `<div class="verdict bad"><span class="tick">✗</span><div><b>${r.paresRuins.length} etiqueta${r.paresRuins.length > 1 ? 's' : ''} não bate${r.paresRuins.length > 1 ? 'm' : ''} com a DANFE</b><span>Nada foi gerado. Confira no arquivo original e envie de novo.</span></div></div>`;
-      html += `<div><ul class="notes">${r.paresRuins.map(b => `<li class="bad">Páginas ${b.pages[0] + 1} e ${b.pages[1] + 1}${b.skus.length ? ` · <code>${esc(b.skus.join(', '))}</code>` : ''}</li>`).join('')}</ul></div>`;
+      html += `<div><ul class="notes">${r.paresRuins.map(b => `<li class="bad">Páginas ${b.pages[0] + 1} e ${b.pages[1] + 1}${b.skus.length ? ` · <code>${esc(b.skus.join(', '))}</code>` : ''}${b.codigoDiferente ? ' · o código de barras da etiqueta tem outra chave de acesso' : ''}</li>`).join('')}</ul></div>`;
       card.innerHTML = html; return;
     }
 
     const seguro = r.paginasIntactas && r.paresNaSaidaOk;
-    const mao = r.conferencia.filter(c => c.ok && c.semConferencia && !c.prova).length;
+    const mao = r.conferencia.filter(c => c.ok && ((c.semConferencia && !c.prova) || c.naoLido)).length;
     if (seguro) {
       html += `<div class="verdict ok"><span class="tick">✓</span><div><b>${r.blocos.length} pedido${r.blocos.length > 1 ? 's' : ''} ordenado${r.blocos.length > 1 ? 's' : ''} e conferido${r.blocos.length > 1 ? 's' : ''}</b><span>Cada etiqueta está junto da sua DANFE.</span></div></div>`;
     } else {
@@ -598,7 +679,10 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
     html += blocoEmbalagem(r);
 
     const avisos = [];
-    if (mao) avisos.push(`<li>${mao} pedido${mao > 1 ? 's' : ''} sem SKU foi para o fim do arquivo. Confira à mão.</li>`);
+    const semSku = r.conferencia.filter(c => c.ok && c.semConferencia && !c.prova);
+    const naoLidos = r.conferencia.filter(c => c.ok && c.naoLido);
+    if (semSku.length) avisos.push(`<li>${semSku.length > 1 ? semSku.length + ' pedidos sem SKU foram' : '1 pedido sem SKU foi'} para o fim do arquivo. Confira à mão.</li>`);
+    if (naoLidos.length) avisos.push(`<li>Não consegui ler o código de barras da etiqueta ${naoLidos.length > 1 ? 'dos pedidos' : 'do pedido'} ${naoLidos.map(c => c.pedido).join(', ')}. Confira à mão em "Ver conferência completa".</li>`);
     if (avisos.length) html += `<div><ul class="notes">${avisos.join('')}</ul></div>`;
 
     if (seguro) html += `<div class="actions"><button class="primary" type="button">Baixar PDF ordenado</button><span class="status" data-st="pdf"></span></div>`;
@@ -661,7 +745,7 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
       try {
         if (!window.pdfjsLib || !window.PDFLib) throw new Error('As bibliotecas de PDF não carregaram. Verifique a internet e recarregue a página.');
         const bytes = new Uint8Array(await f.arrayBuffer());
-        const r = await processarArquivo(pdfjsLib, PDFLib, bytes, m => { prog.textContent = m + '…'; });
+        const r = await processarArquivo(pdfjsLib, PDFLib, bytes, m => { prog.textContent = m + '…'; }, { lerChave });
         if (minha !== rodada) { if (r.docSaida) r.docSaida.destroy(); return; }
         docAnterior = r.docSaida || null;
         render(card, r, f.name, false);
