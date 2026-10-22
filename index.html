@@ -587,7 +587,7 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
     if (!seguro) avisos.push(`<li class="bad">A conferência final falhou, então o download foi bloqueado. Use o arquivo original e avise quem cuida do sistema.</li>`);
     if (r.formatoMisto) avisos.push(`<li>O arquivo mistura a ordem Shopee (etiqueta → DANFE) com a do TikTok (DANFE → etiqueta). Os pares foram conferidos um a um.</li>`);
     const varios = r.ordenados.filter(b => b.skus.length > 1);
-    if (varios.length) avisos.push(`<li>${varios.length} pedido${varios.length > 1 ? 's' : ''} com vários SKUs ficou no lugar do primeiro SKU.</li>`);
+    if (varios.length) avisos.push(`<li>${varios.length > 1 ? varios.length + ' pedidos com vários SKUs foram ordenados' : '1 pedido com vários SKUs foi ordenado'} pelo primeiro SKU da DANFE.</li>`);
     const sem = r.ordenados.filter(b => !b.skus.length);
     if (sem.length) avisos.push(`<li>${sem.length} pedido${sem.length > 1 ? 's' : ''} sem SKU na DANFE, no fim do arquivo: ${sem.map(b => esc(b.descricao || 'sem descrição')).join('; ')}</li>`);
     if (r.conferencia) html += blocoEmbalagem(r);
