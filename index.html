@@ -1,0 +1,684 @@
+<title>Ordenador de Etiquetas</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: uma coluna estreita como uma bancada; cada resultado é uma "etiqueta térmica" de borda reta. */
+:root {
+  --bg: #ECEEEA;
+  --surface: #FFFFFF;
+  --ink: #17191A;
+  --muted: #5D625E;
+  --line: #17191A;
+  --soft: #D3D7D1;
+  --tape: #D98E04;
+  --tape-ink: #1A1300;
+  --tape-soft: #FBEFD6;
+  --ok: #1E7346;
+  --ok-soft: #E1F0E7;
+  --bad: #B3261E;
+  --bad-soft: #F8E1DF;
+  --warn: #8A5A00;
+  --warn-soft: #FAEFD9;
+  --f-display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --f-body: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111312; --surface: #1A1D1B; --ink: #E7EAE5; --muted: #A1A7A2; --line: #E7EAE5; --soft: #343A36;
+    --tape: #F0A92A; --tape-ink: #1A1300; --tape-soft: #3A2C0E;
+    --ok: #6CCB98; --ok-soft: #173426; --bad: #F08A82; --bad-soft: #3D1A18; --warn: #E9B95A; --warn-soft: #382A0F;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111312; --surface: #1A1D1B; --ink: #E7EAE5; --muted: #A1A7A2; --line: #E7EAE5; --soft: #343A36;
+  --tape: #F0A92A; --tape-ink: #1A1300; --tape-soft: #3A2C0E;
+  --ok: #6CCB98; --ok-soft: #173426; --bad: #F08A82; --bad-soft: #3D1A18; --warn: #E9B95A; --warn-soft: #382A0F;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.5; }
+.wrap { max-width: 880px; margin: 0 auto; padding-block: 32px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(36px, 7vw, 56px); line-height: .95; letter-spacing: .01em; text-transform: uppercase; margin: 0; text-wrap: balance; }
+h1 span { background: var(--tape); color: var(--tape-ink); padding: 0 .12em; }
+.lede { margin: 4px 0 0; max-width: 62ch; color: var(--muted); }
+.rules { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 6px 0 0; padding: 0; list-style: none; font-size: 14px; }
+.rules li { display: flex; gap: 6px; align-items: baseline; }
+.rules li::before { content: "■"; color: var(--tape); font-size: 10px; }
+
+.drop { position: relative; display: grid; place-items: center; text-align: center; gap: 6px; padding: 40px 20px; background: var(--surface); border: 2px dashed var(--tape); cursor: pointer; transition: background .15s; }
+.drop:hover, .drop.over { background: var(--tape-soft); }
+.drop:focus-within { outline: 3px solid var(--tape); outline-offset: 3px; }
+.drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.drop strong { font-family: var(--f-display); font-size: 26px; text-transform: uppercase; letter-spacing: .02em; }
+.drop small { color: var(--muted); font-size: 14px; }
+
+.results { display: grid; gap: 20px; }
+.label { background: var(--surface); border: 2px solid var(--line); display: grid; }
+.label > * { padding: 14px 18px; }
+.label > * + * { border-top: 1px solid var(--soft); }
+.label-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; border-bottom: 2px solid var(--line); }
+.label-head .file { font-family: var(--f-mono); font-size: 14px; font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.chip { font-family: var(--f-display); font-weight: 600; font-size: 14px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border: 1.5px solid currentColor; white-space: nowrap; }
+.chip.ex { color: var(--muted); }
+.checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.check { display: grid; gap: 2px; padding: 10px 12px; background: var(--ok-soft); color: var(--ok); }
+.check.bad { background: var(--bad-soft); color: var(--bad); }
+.check b { font-family: var(--f-display); font-size: 24px; line-height: 1; font-variant-numeric: tabular-nums; }
+.check span { font-size: 13px; color: var(--ink); }
+.notes { display: grid; gap: 8px; margin: 0; padding-left: 0; list-style: none; }
+.notes li { padding: 8px 12px; background: var(--warn-soft); border-left: 4px solid var(--warn); font-size: 14px; }
+.notes li.bad { background: var(--bad-soft); border-left-color: var(--bad); }
+.notes code, .sku { font-family: var(--f-mono); font-size: 13px; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+button.primary { font: 600 16px var(--f-body); background: var(--tape); color: var(--tape-ink); border: 2px solid var(--line); padding: 10px 18px; cursor: pointer; box-shadow: 3px 3px 0 var(--line); }
+button.primary:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--line); }
+button.primary:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--line); }
+button.primary:focus-visible { outline: 3px solid var(--tape); outline-offset: 3px; }
+button.primary:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: 3px 3px 0 var(--line); }
+.status { font-size: 14px; color: var(--muted); }
+.status.ok { color: var(--ok); } .status.bad { color: var(--bad); }
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-family: var(--f-mono); font-weight: 500; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 0 8px 6px 0; border-bottom: 1.5px solid var(--line); }
+td { padding: 7px 8px 7px 0; border-bottom: 1px solid var(--soft); vertical-align: top; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0; }
+td.model { font-family: var(--f-mono); font-weight: 500; white-space: nowrap; }
+.sizes { display: flex; flex-wrap: wrap; gap: 4px; }
+.size { font-family: var(--f-mono); font-size: 12.5px; border: 1px solid var(--soft); padding: 0 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.size i { font-style: normal; color: var(--muted); }
+.progress { font-family: var(--f-mono); font-size: 13px; color: var(--muted); }
+footer { font-size: 13px; color: var(--muted); max-width: 62ch; }
+button.ghost { font: 500 15px var(--f-body); background: transparent; color: var(--ink); border: 1.5px solid var(--line); padding: 8px 14px; cursor: pointer; }
+button.ghost:hover { background: var(--tape-soft); }
+button.ghost:focus-visible { outline: 3px solid var(--tape); outline-offset: 2px; }
+button.ghost:disabled { opacity: .5; cursor: not-allowed; background: transparent; }
+.conf { display: grid; gap: 14px; }
+.conf-head { display: grid; gap: 6px; }
+.conf h2 { font-family: var(--f-display); font-weight: 700; font-size: 24px; text-transform: uppercase; letter-spacing: .02em; margin: 0; }
+.conf p { margin: 0; font-size: 14px; color: var(--muted); max-width: 64ch; }
+.tally { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { display: inline-block; font-size: 12.5px; font-weight: 600; padding: 1px 8px; white-space: nowrap; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.conf-tbl { max-height: 460px; overflow: auto; border: 1px solid var(--soft); }
+.conf-tbl table { min-width: 680px; }
+.conf-tbl th { position: sticky; top: 0; background: var(--surface); padding: 8px 8px 6px; }
+.conf-tbl td { padding: 7px 8px; }
+.conf-tbl td.pg { font-family: var(--f-mono); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.conf-tbl td.sku { font-family: var(--f-mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.conf-tbl tr.row-bad td { background: var(--bad-soft); }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; max-height: 720px; overflow-y: auto; padding: 2px; }
+.par { margin: 0; border: 1.5px solid var(--line); background: var(--bg); display: grid; gap: 8px; padding: 10px; }
+.par.bad { border-color: var(--bad); }
+.par figcaption { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 14px; }
+.par figcaption .sku { font-family: var(--f-mono); font-size: 12px; color: var(--muted); width: 100%; overflow-wrap: anywhere; }
+.par .pages { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.pg-box { display: grid; gap: 3px; min-width: 0; }
+.pg-box canvas { width: 100%; background: #fff; border: 1px solid var(--soft); display: block; }
+.pg-box span { font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
+.emb { background: var(--tape-soft); border: 2px solid var(--tape); display: grid; gap: 8px; }
+.emb.ok-emb { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.emb h3 { font-family: var(--f-display); font-weight: 700; font-size: 22px; text-transform: uppercase; letter-spacing: .02em; margin: 0; }
+.emb p { margin: 0; font-size: 14px; }
+.emb ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; }
+.emb li { background: var(--surface); border: 1px solid var(--soft); padding: 8px 10px; display: grid; gap: 4px; }
+.emb-top { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.emb-top .pg { font-family: var(--f-mono); font-size: 13px; color: var(--muted); }
+.emb-itens { font-family: var(--f-mono); font-size: 13px; overflow-wrap: anywhere; }
+.qtd { display: inline-block; font-family: var(--f-display); font-weight: 700; font-size: 15px; background: var(--tape); color: var(--tape-ink); padding: 0 7px; white-space: nowrap; }
+.qtd.big { font-size: 18px; }
+.qtd-1 { color: var(--muted); font-variant-numeric: tabular-nums; }
+.pill.tape { background: var(--tape); color: var(--tape-ink); }
+b.mult { background: var(--tape); color: var(--tape-ink); padding: 0 4px; }
+.conf-tbl tr.row-mult td { background: var(--tape-soft); }
+.par.mult { border-color: var(--tape); border-width: 3px; }
+details.resumo summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } button.primary:hover, button.primary:active { transform: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Expedição · Shopee e TikTok Shop</div>
+    <h1>Ordenador de <span>Etiquetas</span></h1>
+    <p class="lede">Arraste o PDF de etiquetas e receba um PDF novo, ordenado por modelo, cor e tamanho. Tudo acontece aqui no navegador: o arquivo não é enviado para lugar nenhum.</p>
+    <ul class="rules">
+      <li>Cada etiqueta fica colada na sua DANFE, sempre na mesma ordem do original</li>
+      <li>Nenhuma página é alterada, só a ordem dos pedidos</li>
+      <li>Conferência pedido a pedido no arquivo novo</li>
+      <li>O arquivo original fica intacto</li>
+    </ul>
+  </header>
+
+  <label class="drop" id="drop">
+    <input type="file" id="arquivo" accept="application/pdf,.pdf" multiple>
+    <strong>Solte o PDF aqui</strong>
+    <small>ou clique para escolher · pode mandar vários de uma vez</small>
+  </label>
+
+  <section class="results" id="results" aria-live="polite"></section>
+
+  <footer>Formatos reconhecidos: Shopee (etiqueta → DANFE, conferido pelo SKU) e TikTok Shop com iMile (DANFE → etiqueta, conferido pela chave de acesso). Se algum par não bater, o PDF não é gerado e a página mostra quais pedidos conferir. SKUs novos entram sozinhos: o sistema lê qualquer SKU no formato PARTE-PARTE, acha o tamanho (30 a 48) e agrupa o resto como modelo e cor. Um SKU fora desse formato vai para o fim do arquivo, ainda junto da sua etiqueta.</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script>
+/* ===== Núcleo: mesmas regras da skill ordenar-etiquetas-por-sku ===== */
+/* SKU = pedaços de letras/números ligados por hífen (aceita também . _ / dentro dos pedaços, para SKUs novos). */
+const SKU_RE = /^[A-Za-z0-9+._/]+(?:-[A-Za-z0-9+._/]+)+$/;
+const ACESSORIOS = ['GORG', 'CAT', 'REL'];
+
+/* Texto de cada página: na ordem do arquivo (stream) e em linhas visuais (por altura). */
+async function extrairTextos(pdfjsDoc, onProg) {
+  const out = [];
+  for (let n = 1; n <= pdfjsDoc.numPages; n++) {
+    const page = await pdfjsDoc.getPage(n);
+    const tc = await page.getTextContent();
+    let stream = '';
+    for (const it of tc.items) { if ('str' in it) { stream += it.str; if (it.hasEOL) stream += '\n'; } }
+    const its = tc.items.filter(it => 'str' in it && it.str.trim() !== '')
+      .map(it => ({ s: it.str, x: it.transform[4], y: it.transform[5], w: it.width || 0 }));
+    its.sort((a, b) => b.y - a.y || a.x - b.x);
+    const linhas = [];
+    for (const it of its) {
+      const l = linhas[linhas.length - 1];
+      if (l && Math.abs(l.y - it.y) < 2.5) l.items.push(it); else linhas.push({ y: it.y, items: [it] });
+    }
+    const visual = linhas.map(l => {
+      l.items.sort((a, b) => a.x - b.x);
+      let s = '', fim = null;
+      for (const it of l.items) { if (fim !== null && it.x - fim > 1.5) s += ' '; s += it.s; fim = it.x + it.w; }
+      return s;
+    }).join('\n');
+    out.push({ stream, visual });
+    page.cleanup && page.cleanup();
+    if (onProg) onProg(n, pdfjsDoc.numPages);
+  }
+  return out;
+}
+
+const norm = s => s.replace(/[–—−]/g, '-');
+
+function skusDaDanfe(texto) {
+  const i = texto.search(/DESCRI[ÇC][ÃA]O/i);
+  if (i < 0) return [];
+  const resto = texto.slice(i).replace(/^\S+/, '');
+  const vistos = [];
+  for (let l of resto.split('\n')) {
+    l = norm(l.trim());
+    if (SKU_RE.test(l) && /[A-Za-z]/.test(l)) { const u = l.toUpperCase(); if (!vistos.includes(u)) vistos.push(u); }
+  }
+  return vistos;
+}
+
+/* Quantidade: o número logo antes dos dois valores (unitário e total) na linha do produto.
+   Ex.: "... PARA USO 2 **** ****" ou "... PARA USO 2 89,90 179,80". */
+const QTD_RE = /(?:^|\s)(\d{1,4}(?:,\d+)?)\s+(?:\*+|R?\$?\s?[\d.]+,\d{2})\s+(?:\*+|R?\$?\s?[\d.]+,\d{2})\s*$/;
+function itensDaDanfe(texto) {
+  const i = texto.search(/DESCRI[ÇC][ÃA]O/i);
+  if (i < 0) return { itens: [], total: null };
+  const linhas = texto.slice(i).replace(/^\S+/, '').split('\n').map(l => norm(l.trim()));
+  const itens = []; let atual = null, total = 0, achou = 0;
+  for (const l of linhas) {
+    if (SKU_RE.test(l) && /[A-Za-z]/.test(l)) { atual = { sku: l.toUpperCase(), qtd: null }; itens.push(atual); continue; }
+    const m = QTD_RE.exec(l);
+    if (m) {
+      const q = parseFloat(m[1].replace(',', '.'));
+      total += q; achou++;
+      if (atual && atual.qtd === null) atual.qtd = q;
+    }
+  }
+  const junto = [];
+  for (const it of itens) {
+    const j = junto.find(x => x.sku === it.sku);
+    if (j) j.qtd = (j.qtd === null || it.qtd === null) ? null : j.qtd + it.qtd; else junto.push({ ...it });
+  }
+  return { itens: junto, total: achou ? total : null };
+}
+
+/* Quantidade de peças impressa na etiqueta (iMile: "3 1.500 KG"). */
+function qtdDaEtiqueta(texto) {
+  const m = texto.match(/(?:^|\n|\s)(\d{1,3})\s+\d+[.,]\d+\s*KG/i);
+  return m ? +m[1] : null;
+}
+
+function descricaoDaDanfe(texto) {
+  const i = texto.search(/DESCRI[ÇC][ÃA]O/i);
+  if (i < 0) return '';
+  return texto.slice(i).split('\n').slice(1).map(s => s.trim()).filter(Boolean).slice(0, 2).join(' · ');
+}
+
+function chaveDaDanfe(texto) {
+  const t = texto.replace(/\s+/g, '');
+  const m = t.match(/CHAVEDEACESSO:?(\d{44})/i) || t.match(/(\d{44})/);
+  return m ? m[1] : null;
+}
+
+function chaveOrdenacao(b) {
+  if (!b.skus.length) return [1, '', 0, b.orig];
+  let size = 0; const rest = [];
+  for (const t of b.skus[0].split(/[-+]/)) {
+    const num = /^(\d+)(?:\/\d+)?$/.exec(t); // aceita tamanho duplo, ex.: 35/36
+    if (!size && num && +num[1] >= 30 && +num[1] <= 48 && rest.length && !(rest.length === 1 && rest[0] === 'KIT')) { size = +num[1]; continue; }
+    if (size && ACESSORIOS.includes(t)) continue;
+    rest.push(t);
+  }
+  return [0, rest.join('-'), size, b.orig];
+}
+
+function compararChaves(a, b) {
+  for (let i = 0; i < 4; i++) {
+    if (a[i] < b[i]) return -1;
+    if (a[i] > b[i]) return 1;
+  }
+  return 0;
+}
+
+/* Monta os pares, confere e ordena. Não mexe em nada do PDF. */
+function analisar(textos) {
+  const n = textos.length;
+  const erros = [];
+  if (n === 0) return { erros: ['O PDF não tem páginas.'] };
+  if (n % 2) erros.push(`O PDF tem ${n} páginas (número ímpar). Cada pedido precisa de 2 páginas: etiqueta e DANFE.`);
+  const isD = textos.map(t => /DANFE/.test(t.stream) || /DANFE/.test(t.visual));
+  if (!isD.some(Boolean)) erros.push('Não encontrei nenhuma DANFE no arquivo. Confira se é o PDF de etiquetas com DANFE.');
+  if (erros.length) return { erros };
+
+  const blocos = [], foraDoPadrao = [];
+  let dPrimeiro = 0, ePrimeiro = 0;
+  for (let i = 0; i < n; i += 2) {
+    const a = i, b = i + 1;
+    if (isD[a] === isD[b]) { foraDoPadrao.push(`páginas ${a + 1} e ${b + 1}`); continue; }
+    const [d, e] = isD[a] ? [a, b] : [b, a];
+    if (isD[a]) dPrimeiro++; else ePrimeiro++;
+    let skus = skusDaDanfe(textos[d].stream);
+    if (!skus.length) skus = skusDaDanfe(textos[d].visual);
+    const chave = chaveDaDanfe(textos[d].stream) || chaveDaDanfe(textos[d].visual);
+    const etTexto = textos[e].stream + '\n' + textos[e].visual;
+    const etCompacta = norm(etTexto).toUpperCase().replace(/\s+/g, '');
+    const primeiraLinha = norm((textos[e].stream.split('\n').find(l => l.trim()) || '')).trim().toUpperCase();
+    const okChave = !!chave && etCompacta.includes(chave);
+    const okSku = skus.length > 0 && (skus.includes(primeiraLinha) || skus.some(s => etCompacta.includes(s)));
+    blocos.push({
+      pages: [a, b], skus, chave, orig: blocos.length,
+      danfePrimeiro: isD[a],
+      ...(() => {
+        let q = itensDaDanfe(textos[d].stream);
+        if (q.total === null) q = itensDaDanfe(textos[d].visual);
+        return { itens: q.itens, unidades: q.total };
+      })(),
+      qtdEtiqueta: qtdDaEtiqueta(textos[e].stream) ?? qtdDaEtiqueta(textos[e].visual),
+      prova: okChave ? 'chave' : okSku ? 'sku' : null,
+      ok: okChave || okSku,
+      semConferencia: !(okChave || okSku) && !skus.length,
+      descricao: descricaoDaDanfe(textos[d].stream) || descricaoDaDanfe(textos[d].visual),
+    });
+  }
+  if (foraDoPadrao.length) {
+    return { erros: ['As páginas não alternam entre etiqueta e DANFE em: ' + foraDoPadrao.join(', ') + '. Nada foi gerado.'] };
+  }
+  const plataforma = dPrimeiro > ePrimeiro ? 'tiktok' : 'shopee';
+  const formatoMisto = dPrimeiro > 0 && ePrimeiro > 0;
+  const paresRuins = blocos.filter(b => !b.ok && !b.semConferencia);
+  for (const b of blocos) b.key = chaveOrdenacao(b);
+  const ordenados = blocos.slice().sort((x, y) => compararChaves(x.key, y.key));
+  return { erros: [], plataforma, formatoMisto, blocos, ordenados, paresRuins };
+}
+
+/* Grava o novo PDF copiando as páginas como estão (só muda a ordem). */
+async function gerarPdf(PDFLib, bytesOriginais, ordenados) {
+  const src = await PDFLib.PDFDocument.load(bytesOriginais, { updateMetadata: false });
+  const out = await PDFLib.PDFDocument.create({ updateMetadata: false });
+  const indices = ordenados.flatMap(b => b.pages);
+  const copias = await out.copyPages(src, indices);
+  for (const p of copias) out.addPage(p);
+  return { bytes: await out.save(), src };
+}
+
+/* Assinatura de cada página: conteúdo + imagens/objetos + tamanho + rotação. */
+async function assinaturas(PDFLib, doc) {
+  const { PDFName, PDFArray, PDFDict, PDFRef } = PDFLib;
+  const ctx = doc.context;
+  const enc = new TextEncoder();
+  const bytesDe = obj => {
+    if (!obj) return new Uint8Array();
+    if (obj.contents instanceof Uint8Array) return obj.contents;
+    if (typeof obj.getContents === 'function') return obj.getContents();
+    return new Uint8Array();
+  };
+  const sigs = [];
+  for (const page of doc.getPages()) {
+    const partes = [];
+    const add = b => { partes.push(b); partes.push(enc.encode('|')); };
+    let c = page.node.Contents();
+    if (c instanceof PDFArray) { for (let i = 0; i < c.size(); i++) add(bytesDe(c.lookup(i))); }
+    else add(bytesDe(c));
+    const visto = new Set();
+    const xobjs = (res, prof) => {
+      if (!(res instanceof PDFDict) || prof > 6) return;
+      const xo = res.lookup(PDFName.of('XObject'));
+      if (!(xo instanceof PDFDict)) return;
+      const ents = xo.entries().map(([k, v]) => [k.asString(), v]).sort((a, b) => a[0] < b[0] ? -1 : 1);
+      for (const [nome, ref] of ents) {
+        const st = ctx.lookup(ref);
+        add(enc.encode(nome));
+        if (ref instanceof PDFRef) { const id = ref.toString(); if (visto.has(id)) continue; visto.add(id); }
+        add(bytesDe(st));
+        if (st && st.dict) xobjs(st.dict.lookup(PDFName.of('Resources')), prof + 1);
+      }
+    };
+    xobjs(page.node.Resources(), 0);
+    const mb = page.getMediaBox();
+    add(enc.encode(`${mb.x},${mb.y},${mb.width},${mb.height}|${page.getRotation().angle}`));
+    let total = 0; for (const p of partes) total += p.length;
+    const buf = new Uint8Array(total); let o = 0; for (const p of partes) { buf.set(p, o); o += p.length; }
+    const h = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+    sigs.push(Array.from(h, x => x.toString(16).padStart(2, '0')).join(''));
+  }
+  return sigs;
+}
+
+/* Processo completo para um arquivo. */
+async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
+  const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  const textos = await extrairTextos(doc, (i, n) => onProg && onProg('Lendo página ' + i + ' de ' + n));
+  const r = analisar(textos);
+  r.paginas = textos.length;
+  if (r.erros.length || r.paresRuins.length) return r;
+  onProg && onProg('Montando o PDF ordenado');
+  const { bytes: saida, src } = await gerarPdf(PDFLib, bytes.slice(), r.ordenados);
+
+  onProg && onProg('Conferindo página por página');
+  const outDoc = await PDFLib.PDFDocument.load(saida.slice());
+  const sigSrc = await assinaturas(PDFLib, src);
+  const sigOut = await assinaturas(PDFLib, outDoc);
+  const a1 = sigSrc.slice().sort(), a2 = sigOut.slice().sort();
+  r.paginasIntactas = a1.length === a2.length && a1.every((v, i) => v === a2[i]);
+
+  // Relê o arquivo NOVO do zero e confere cada pedido nele
+  onProg && onProg('Conferindo os pares no arquivo novo');
+  const doc2 = await pdfjsLib.getDocument({ data: saida.slice() }).promise;
+  const r2 = analisar(await extrairTextos(doc2));
+  const saidaOk = !r2.erros.length && r2.blocos && r2.blocos.length === r.ordenados.length;
+  r.conferencia = r.ordenados.map((b, i) => {
+    const o = saidaOk ? r2.blocos[i] : null;
+    const novas = [2 * i, 2 * i + 1];
+    // A página nova é idêntica à original do MESMO pedido, na MESMA ordem interna?
+    const mesmoPar = sigOut[novas[0]] === sigSrc[b.pages[0]] && sigOut[novas[1]] === sigSrc[b.pages[1]];
+    const mesmaChave = !!o && o.chave === b.chave;
+    const mesmoSku = !!o && o.skus.join('|') === b.skus.join('|');
+    const conferidoNoNovo = !!o && (o.prova !== null || b.semConferencia);
+    return {
+      pedido: i + 1, novas: novas.map(x => x + 1), originais: b.pages.map(x => x + 1),
+      skus: b.skus, chave: b.chave, prova: o ? o.prova : null, danfePrimeiro: b.danfePrimeiro,
+      semConferencia: b.semConferencia, descricao: b.descricao,
+      itens: b.itens, unidades: b.unidades, qtdEtiqueta: b.qtdEtiqueta,
+      qtdDivergente: b.unidades !== null && b.qtdEtiqueta !== null && b.unidades !== b.qtdEtiqueta,
+      mesmoPar, mesmaChave, mesmoSku, conferidoNoNovo,
+      ok: mesmoPar && mesmaChave && mesmoSku && conferidoNoNovo,
+    };
+  });
+  r.paresNaSaidaOk = saidaOk && r.conferencia.every(c => c.ok);
+  r.docSaida = doc2;
+  r.saida = saida;
+  return r;
+}
+
+
+/* ===== Interface ===== */
+(function () {
+  const WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = WORKER;
+
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const NOME_PLAT = { shopee: 'Shopee', tiktok: 'TikTok Shop' };
+
+  let downloadsCap;
+  const capPronta = (window.claude && typeof window.claude.use === 'function')
+    ? window.claude.use('downloads').then(d => (downloadsCap = d)).catch(() => (downloadsCap = null))
+    : Promise.resolve((downloadsCap = undefined));
+
+  function agrupar(ordenados) {
+    const grupos = [];
+    for (const b of ordenados) {
+      const nome = b.skus.length ? (b.key[1] || b.skus[0]) : 'SEM SKU';
+      let g = grupos[grupos.length - 1];
+      if (!g || g.nome !== nome) { g = { nome, tam: new Map(), total: 0 }; grupos.push(g); }
+      const t = b.skus.length ? (b.key[2] || '—') : '—';
+      g.tam.set(t, (g.tam.get(t) || 0) + 1); g.total++;
+    }
+    return grupos;
+  }
+
+  function tabela(ordenados) {
+    const linhas = agrupar(ordenados).map(g => `<tr><td class="model">${esc(g.nome)}</td><td><div class="sizes">${
+      [...g.tam].map(([t, q]) => `<span class="size">${esc(t)} <i>×${q}</i></span>`).join('')
+    }</div></td><td class="num">${g.total}</td></tr>`).join('');
+    return `<div class="tbl-wrap"><table><thead><tr><th>Modelo · cor</th><th>Tamanhos</th><th class="num">Pedidos</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
+  }
+
+  function check(ok, valor, texto) {
+    return `<div class="check${ok ? '' : ' bad'}"><b>${valor}</b><span>${texto}</span></div>`;
+  }
+
+  function provaTexto(c) {
+    if (c.semConferencia && !c.prova) return 'Sem SKU e sem chave para cruzar. Veja as páginas.';
+    if (c.prova === 'chave') return `Chave de acesso …${esc((c.chave || '').slice(-8))} da DANFE está impressa na etiqueta`;
+    if (c.prova === 'sku') return 'O SKU da etiqueta é o mesmo da DANFE';
+    return 'Não foi possível cruzar';
+  }
+  function statusConf(c) {
+    if (!c.ok) return '<span class="pill bad">✗ Erro</span>';
+    if (c.semConferencia && !c.prova) return '<span class="pill warn">Conferir à mão</span>';
+    return '<span class="pill ok">✓ Conferido</span>';
+  }
+
+  function qtdPill(c) {
+    if (c.qtdDivergente) return `<span class="pill bad">DANFE ${c.unidades} · etiqueta ${c.qtdEtiqueta}</span>`;
+    if (c.unidades === null || c.unidades === undefined) return '<span class="pill warn">?</span>';
+    if (c.unidades > 1) return `<span class="qtd">${c.unidades} un.</span>`;
+    return '<span class="qtd-1">1</span>';
+  }
+  function itensTexto(c) {
+    if (!c.itens || !c.itens.length) return c.skus.length ? esc(c.skus.join(' + ')) : '<i>sem SKU</i>';
+    return c.itens.map(it => `${esc(it.sku)} <b class="${it.qtd > 1 ? 'mult' : ''}">×${it.qtd ?? '?'}</b>`).join('<br>');
+  }
+
+  function blocoEmbalagem(r) {
+    const lista = r.conferencia.filter(c => c.unidades > 1 || c.qtdDivergente || ((c.unidades === null || c.unidades === undefined) && c.skus.length));
+    if (!lista.length) return '<div class="emb ok-emb"><b>Todos os pedidos têm 1 unidade.</b></div>';
+    const linhas = lista.map(c => {
+      let motivo;
+      if (c.qtdDivergente) motivo = `<span class="pill bad">A DANFE diz ${c.unidades} e a etiqueta diz ${c.qtdEtiqueta}. Confira antes de embalar.</span>`;
+      else if (c.unidades === null || c.unidades === undefined) motivo = '<span class="pill warn">Não consegui ler a quantidade. Confira na DANFE.</span>';
+      else if (c.itens.some(it => it.qtd > 1)) motivo = `<span class="pill tape">Mesmo SKU repetido</span>`;
+      else motivo = `<span class="pill tape">SKUs diferentes</span>`;
+      return `<li><div class="emb-top"><b>Pedido ${c.pedido}</b><span class="pg">págs. ${c.novas.join(' e ')}</span>${c.unidades ? `<span class="qtd big">${c.unidades} unidades</span>` : ''}${motivo}</div><div class="emb-itens">${itensTexto(c)}</div></li>`;
+    }).join('');
+    return `<div class="emb"><h3>Atenção na embalagem: ${lista.length} pedido${lista.length > 1 ? 's' : ''} com mais de 1 unidade</h3><p>Marque essas etiquetas ao imprimir. A quantidade fica escrita só na DANFE e passa despercebida fácil.</p><ul>${linhas}</ul></div>`;
+  }
+
+  function blocoConferencia(r) {
+    const conf = r.conferencia;
+    const okN = conf.filter(c => c.ok && !(c.semConferencia && !c.prova)).length;
+    const mao = conf.filter(c => c.ok && c.semConferencia && !c.prova).length;
+    const ruins = conf.filter(c => !c.ok).length;
+    const linhas = conf.map(c => `<tr class="${c.ok ? (c.unidades > 1 || c.qtdDivergente ? 'row-mult' : '') : 'row-bad'}"><td class="num">${c.pedido}</td><td class="pg">${c.novas.join(' + ')}</td><td class="pg">${c.originais.join(' + ')}</td><td class="sku">${itensTexto(c)}</td><td class="num">${qtdPill(c)}</td><td>${provaTexto(c)}${c.mesmoPar ? '' : '<br><b>Páginas diferentes das originais</b>'}</td><td>${statusConf(c)}</td></tr>`).join('');
+    return `<div class="conf">
+      <div class="conf-head">
+        <h2>Conferência pedido a pedido</h2>
+        <p>O sistema abriu o PDF <b>novo</b> e conferiu cada pedido de novo: a DANFE e a etiqueta são as mesmas páginas do original, uma colada na outra, na mesma ordem.</p>
+        <div class="tally"><span class="pill ok">✓ ${okN} conferidos</span>${mao ? `<span class="pill warn">${mao} para conferir à mão</span>` : ''}${ruins ? `<span class="pill bad">✗ ${ruins} com erro</span>` : ''}</div>
+      </div>
+      <div class="actions">
+        <button class="ghost" type="button" data-acao="paginas">Ver as páginas lado a lado</button>
+        <button class="ghost" type="button" data-acao="csv">Baixar conferência (.csv)</button>
+        <span class="status" data-st="conf"></span>
+      </div>
+      <div class="thumbs" hidden></div>
+      <div class="tbl-wrap conf-tbl"><table><thead><tr><th class="num">Pedido</th><th>Páginas no PDF novo</th><th>Páginas no original</th><th>SKU (da DANFE)</th><th class="num">Qtd</th><th>Como foi conferido</th><th>Status</th></tr></thead><tbody>${linhas}</tbody></table></div>
+    </div>`;
+  }
+
+  function csvConferencia(r) {
+    const q = v => '"' + String(v).replace(/"/g, '""') + '"';
+    const linhas = [['pedido', 'paginas_pdf_novo', 'paginas_original', 'itens', 'unidades', 'qtd_na_etiqueta', 'chave_de_acesso', 'conferido_por', 'status'].join(';')];
+    for (const c of r.conferencia) {
+      const st = !c.ok ? 'ERRO' : c.qtdDivergente ? 'QTD DIFERENTE NA ETIQUETA' : (c.semConferencia && !c.prova) ? 'CONFERIR A MAO' : c.unidades > 1 ? 'OK - ' + c.unidades + ' UNIDADES' : 'OK';
+      linhas.push([c.pedido, c.novas.join(' + '), c.originais.join(' + '), (c.itens && c.itens.length ? c.itens.map(it => it.sku + ' x' + (it.qtd ?? '?')).join(' + ') : c.skus.join(' + ')) || 'sem SKU', c.unidades ?? '', c.qtdEtiqueta ?? '', c.chave ? "'" + c.chave : '', c.prova === 'chave' ? 'chave de acesso na etiqueta' : c.prova === 'sku' ? 'SKU na etiqueta' : 'nao cruzado', st].map(q).join(';'));
+    }
+    return '\ufeff' + linhas.join('\r\n');
+  }
+
+  async function desenharMiniaturas(r, box) {
+    box.hidden = false;
+    if (box.dataset.pronto) return;
+    box.dataset.pronto = '1';
+    const doc = r.docSaida;
+    const desenhar = async (cv) => {
+      const page = await doc.getPage(+cv.dataset.p);
+      const vp1 = page.getViewport({ scale: 1 });
+      const escala = (cv.clientWidth || 150) * (window.devicePixelRatio || 1) / vp1.width;
+      const vp = page.getViewport({ scale: escala });
+      cv.width = vp.width; cv.height = vp.height;
+      await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+    };
+    const io = 'IntersectionObserver' in window ? new IntersectionObserver(ents => {
+      for (const e of ents) if (e.isIntersecting) { io.unobserve(e.target); desenhar(e.target).catch(() => {}); }
+    }, { rootMargin: '300px' }) : null;
+    box.innerHTML = r.conferencia.map(c => {
+      const nomes = c.danfePrimeiro ? ['DANFE', 'Etiqueta'] : ['Etiqueta', 'DANFE'];
+      return `<figure class="par ${c.ok ? (c.unidades > 1 || c.qtdDivergente ? 'mult' : '') : 'bad'}"><figcaption><b>Pedido ${c.pedido}</b> ${statusConf(c)} ${c.unidades > 1 || c.qtdDivergente ? qtdPill(c) : ''}<span class="sku">${itensTexto(c)}</span></figcaption><div class="pages">${
+        c.novas.map((p, k) => `<div class="pg-box"><canvas data-p="${p}" style="aspect-ratio:${1 / 1.41}"></canvas><span>pág. ${p} · ${nomes[k]}</span></div>`).join('')
+      }</div></figure>`;
+    }).join('');
+    box.querySelectorAll('canvas').forEach(cv => io ? io.observe(cv) : desenhar(cv));
+  }
+
+  function nomeSaida(r) { return `etiquetas_${r.plataforma}_ordenadas_por_SKU.pdf`; }
+
+  function render(card, r, arquivo, exemplo) {
+    const chip = exemplo ? '<span class="chip ex">Exemplo</span>' : (r.plataforma ? `<span class="chip">${NOME_PLAT[r.plataforma]}</span>` : '');
+    let html = `<div class="label-head"><span class="file">${esc(arquivo)}</span>${chip}</div>`;
+
+    if (r.erros && r.erros.length) {
+      html += `<div><ul class="notes">${r.erros.map(e => `<li class="bad">${esc(e)}</li>`).join('')}</ul></div>`;
+      card.innerHTML = html; return;
+    }
+    if (r.paresRuins.length) {
+      html += `<div class="checks">${check(true, r.blocos.length, 'pedidos no arquivo')}${check(false, r.paresRuins.length, 'pares que não batem')}</div>`;
+      html += `<div><ul class="notes">${r.paresRuins.map(b => `<li class="bad">Páginas ${b.pages[0] + 1} e ${b.pages[1] + 1}: a etiqueta não corresponde à DANFE${b.skus.length ? ` (SKU <code>${esc(b.skus.join(', '))}</code>)` : ''}.</li>`).join('')}</ul></div>`;
+      html += `<div class="status bad">Nada foi gerado. Confira esses pedidos no arquivo original e envie de novo.</div>`;
+      card.innerHTML = html; return;
+    }
+
+    const seguro = r.paginasIntactas && r.paresNaSaidaOk;
+    html += `<div class="checks">${check(true, r.blocos.length, 'pedidos ordenados')}${check(r.paginasIntactas, r.paginasIntactas ? 'OK' : 'ERRO', `${r.paginas} páginas intactas`)}${check(r.paresNaSaidaOk, r.paresNaSaidaOk ? 'OK' : 'ERRO', 'pares etiqueta + DANFE')}</div>`;
+
+    const avisos = [];
+    if (!seguro) avisos.push(`<li class="bad">A conferência final falhou, então o download foi bloqueado. Use o arquivo original e avise quem cuida do sistema.</li>`);
+    if (r.formatoMisto) avisos.push(`<li>O arquivo mistura a ordem Shopee (etiqueta → DANFE) com a do TikTok (DANFE → etiqueta). Os pares foram conferidos um a um.</li>`);
+    const varios = r.ordenados.filter(b => b.skus.length > 1);
+    if (varios.length) avisos.push(`<li>${varios.length} pedido${varios.length > 1 ? 's' : ''} com vários SKUs ficou no lugar do primeiro SKU.</li>`);
+    const sem = r.ordenados.filter(b => !b.skus.length);
+    if (sem.length) avisos.push(`<li>${sem.length} pedido${sem.length > 1 ? 's' : ''} sem SKU na DANFE, no fim do arquivo: ${sem.map(b => esc(b.descricao || 'sem descrição')).join('; ')}</li>`);
+    if (r.conferencia) html += blocoEmbalagem(r);
+    if (avisos.length) html += `<div><ul class="notes">${avisos.join('')}</ul></div>`;
+
+    if (seguro) {
+      html += `<div class="actions"><button class="primary" type="button">Baixar ${esc(nomeSaida(r))}</button><span class="status" data-st="pdf"></span></div>`;
+    }
+    if (r.conferencia) html += blocoConferencia(r);
+    html += `<details class="resumo"><summary>Resumo por modelo e tamanho</summary>${tabela(r.ordenados)}</details>`;
+    card.innerHTML = html;
+
+    const btn = card.querySelector('button.primary');
+    const stPdf = card.querySelector('[data-st="pdf"]');
+    const stConf = card.querySelector('[data-st="conf"]');
+    const btnPag = card.querySelector('[data-acao="paginas"]');
+    const btnCsv = card.querySelector('[data-acao="csv"]');
+    if (exemplo) {
+      [btn, btnPag, btnCsv].forEach(b => b && (b.disabled = true));
+      if (stPdf) stPdf.textContent = 'Exemplo: envie um PDF para baixar o arquivo ordenado.';
+      return;
+    }
+    if (btnPag) btnPag.addEventListener('click', () => {
+      const box = card.querySelector('.thumbs');
+      if (!box.hidden && box.dataset.pronto) { box.hidden = true; btnPag.textContent = 'Ver as páginas lado a lado'; return; }
+      btnPag.textContent = 'Esconder as páginas';
+      desenharMiniaturas(r, box);
+    });
+    if (btnCsv) btnCsv.addEventListener('click', () => salvar(nomeSaida(r).replace('.pdf', '_conferencia.csv'), new Blob([csvConferencia(r)], { type: 'text/csv' }), stConf));
+    if (!btn) return;
+    capPronta.then(() => { if (downloadsCap === null) { btn.hidden = true; if (btnCsv) btnCsv.hidden = true; stPdf.textContent = 'Downloads não estão disponíveis nesta visualização. Abra a página no navegador do computador.'; } });
+    btn.addEventListener('click', () => salvar(nomeSaida(r), new Blob([r.saida], { type: 'application/pdf' }), stPdf));
+  }
+
+  async function salvar(nome, blob, st) {
+    st.className = 'status'; st.textContent = '';
+    if (downloadsCap) {
+      try {
+        await downloadsCap.save({ filename: nome, data: blob });
+        st.className = 'status ok'; st.textContent = 'Arquivo salvo.';
+      } catch (e) {
+        const c = e && e.code;
+        st.className = 'status' + (c === 'declined' ? '' : ' bad');
+        st.textContent = c === 'declined' ? 'Download cancelado.' : c === 'rate_limited' ? 'Já tem um download aberto. Espere um instante e tente de novo.' : 'Não foi possível salvar aqui. Abra a página no navegador do computador.';
+      }
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    st.className = 'status ok'; st.textContent = 'Arquivo baixado.';
+  }
+
+  let contador = 0, temExemplo = true;
+  async function processar(files) {
+    const pdfs = [...files].filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+    if (!pdfs.length) return;
+    if (temExemplo) { $('#results').innerHTML = ''; temExemplo = false; }
+    for (const f of pdfs) {
+      const card = document.createElement('article');
+      card.className = 'label'; card.id = 'r' + (++contador);
+      card.innerHTML = `<div class="label-head"><span class="file">${esc(f.name)}</span></div><div class="progress">Abrindo o arquivo…</div>`;
+      $('#results').prepend(card);
+      const prog = card.querySelector('.progress');
+      try {
+        if (!window.pdfjsLib || !window.PDFLib) throw new Error('As bibliotecas de PDF não carregaram. Verifique a internet e recarregue a página.');
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        const r = await processarArquivo(pdfjsLib, PDFLib, bytes, m => { prog.textContent = m + '…'; });
+        render(card, r, f.name, false);
+      } catch (e) {
+        const msg = /password|encrypt/i.test(String(e && (e.name + e.message))) ? 'O PDF está protegido por senha. Baixe de novo na plataforma sem senha.' : (e && e.message) || 'Não consegui ler este PDF.';
+        render(card, { erros: [msg] }, f.name, false);
+      }
+    }
+  }
+
+  const drop = $('#drop'), input = $('#arquivo');
+  input.addEventListener('change', () => { processar(input.files); input.value = ''; });
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, () => drop.classList.remove('over')));
+  drop.addEventListener('drop', e => { e.preventDefault(); processar(e.dataTransfer.files); });
+
+  /* Exemplo inicial (dados fictícios) */
+  const ex = [['171-PRETO', 37, ['171-PRETO-37', '7000-PRETO-40']], ['7000-BRANCO', 36, ['7000-BRANCO-36']], ['7000-BRANCO', 38, ['7000-BRANCO-38']], ['7000-BRANCO', 38, ['7000-BRANCO-38']], ['KIT-2-171-PRETO-CINZA', 40, ['KIT-2-171-PRETO-CINZA-40+GORG-CAT-REL']], ['MOC-CAM-PRETO', 35, ['MOC-CAM-35-PRETO']], ['MOC-CAM-PRETO', 39, ['MOC-CAM-39-PRETO']]]
+    .map(([m, t, s], i) => ({ key: [0, m, t, i], skus: s, pages: [2 * i, 2 * i + 1] }));
+  const card = document.createElement('article'); card.className = 'label'; card.id = 'ex';
+  $('#results').append(card);
+  const exOrig = [11, 7, 1, 13, 5, 3, 9];
+  const exQ = [[1, 1], [1], [2], [1], [1], [1], [3]];
+  const exConf = ex.map((b, i) => ({ itens: b.skus.map((s, k) => ({ sku: s, qtd: exQ[i][k] })), unidades: exQ[i].reduce((a, x) => a + x, 0), qtdEtiqueta: exQ[i].reduce((a, x) => a + x, 0), pedido: i + 1, novas: [2 * i + 1, 2 * i + 2], originais: [exOrig[i], exOrig[i] + 1], skus: b.skus, chave: '35261012345678000190550010000123451' + String(100000000 + i * 7919).slice(-9), prova: 'chave', danfePrimeiro: true, ok: true, mesmoPar: true }));
+  render(card, { erros: [], plataforma: 'tiktok', blocos: ex, ordenados: ex, paresRuins: [], paginas: 14, paginasIntactas: true, paresNaSaidaOk: true, conferencia: exConf }, 'exemplo_tiktok.pdf', true);
+})();
+</script>
