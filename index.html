@@ -168,9 +168,9 @@ details.mais > summary:focus-visible { outline: 3px solid var(--tape); outline-o
   </header>
 
   <label class="drop" id="drop">
-    <input type="file" id="arquivo" accept="application/pdf,.pdf" multiple>
+    <input type="file" id="arquivo" accept="application/pdf,.pdf">
     <strong>Solte o PDF aqui</strong>
-    <small>ou clique para escolher</small>
+    <small>ou clique para escolher · um PDF por vez</small>
   </label>
 
   <section class="results" id="results" aria-live="polite"></section>
@@ -644,10 +644,15 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
   }
 
   let contador = 0;
+  let docAnterior = null, rodada = 0;
   async function processar(files) {
     const pdfs = [...files].filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     if (!pdfs.length) return;
-    for (const f of pdfs) {
+    // Um PDF por vez: o novo apaga o resultado anterior da tela
+    const minha = ++rodada;
+    $('#results').innerHTML = '';
+    if (docAnterior) { try { docAnterior.destroy(); } catch (e) {} docAnterior = null; }
+    for (const f of pdfs.slice(0, 1)) {
       const card = document.createElement('article');
       card.className = 'label'; card.id = 'r' + (++contador);
       card.innerHTML = `<div class="label-head"><span class="file">${esc(f.name)}</span></div><div class="progress">Abrindo o arquivo…</div>`;
@@ -657,9 +662,12 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
         if (!window.pdfjsLib || !window.PDFLib) throw new Error('As bibliotecas de PDF não carregaram. Verifique a internet e recarregue a página.');
         const bytes = new Uint8Array(await f.arrayBuffer());
         const r = await processarArquivo(pdfjsLib, PDFLib, bytes, m => { prog.textContent = m + '…'; });
+        if (minha !== rodada) { if (r.docSaida) r.docSaida.destroy(); return; }
+        docAnterior = r.docSaida || null;
         render(card, r, f.name, false);
       } catch (e) {
         const msg = /password|encrypt/i.test(String(e && (e.name + e.message))) ? 'O PDF está protegido por senha. Baixe de novo na plataforma sem senha.' : (e && e.message) || 'Não consegui ler este PDF.';
+        if (minha !== rodada) return;
         render(card, { erros: [msg] }, f.name, false);
       }
     }
