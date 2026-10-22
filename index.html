@@ -40,7 +40,7 @@
 }
 * { box-sizing: border-box; }
 body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.5; }
-.wrap { max-width: 880px; margin: 0 auto; padding-block: 32px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+.wrap { max-width: 760px; margin: 0 auto; padding-block: 40px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
 header { display: grid; gap: 8px; }
 .eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(36px, 7vw, 56px); line-height: .95; letter-spacing: .01em; text-transform: uppercase; margin: 0; text-wrap: balance; }
@@ -138,32 +138,44 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; background: transparen
 b.mult { background: var(--tape); color: var(--tape-ink); padding: 0 4px; }
 .conf-tbl tr.row-mult td { background: var(--tape-soft); }
 .par.mult { border-color: var(--tape); border-width: 3px; }
+details.resumo { margin-top: 14px; }
 details.resumo summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+details.mais > summary { cursor: pointer; font-weight: 600; color: var(--muted); list-style: none; display: flex; align-items: center; gap: 8px; }
+details.mais > summary::-webkit-details-marker { display: none; }
+details.mais > summary::before { content: "▸"; color: var(--tape); }
+details.mais[open] > summary::before { content: "▾"; }
+details.mais[open] > summary { margin-bottom: 14px; }
+details.mais > summary:focus-visible { outline: 3px solid var(--tape); outline-offset: 2px; }
+.conf-note { margin: 0; font-size: 14px; color: var(--muted); max-width: 64ch; }
+.verdict { display: flex; gap: 14px; align-items: center; }
+.verdict .tick { flex: none; width: 44px; height: 44px; display: grid; place-items: center; font-size: 26px; font-weight: 700; background: var(--ok-soft); color: var(--ok); }
+.verdict.bad .tick { background: var(--bad-soft); color: var(--bad); }
+.verdict div { display: grid; gap: 2px; min-width: 0; }
+.verdict b { font-family: var(--f-display); font-size: 24px; line-height: 1.1; text-transform: uppercase; letter-spacing: .01em; }
+.verdict.bad b { color: var(--bad); }
+.verdict span { color: var(--muted); font-size: 15px; }
+.emb li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.emb li small { width: 100%; font-family: var(--f-mono); font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.emb li small b { color: var(--ink); background: var(--tape); padding: 0 3px; }
+.emb .err { color: var(--bad); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } button.primary:hover, button.primary:active { transform: none; } }
 </style>
 
 <div class="wrap">
   <header>
-    <div class="eyebrow">Expedição · Shopee e TikTok Shop</div>
     <h1>Ordenador de <span>Etiquetas</span></h1>
-    <p class="lede">Arraste o PDF de etiquetas e receba um PDF novo, ordenado por modelo, cor e tamanho. Tudo acontece aqui no navegador: o arquivo não é enviado para lugar nenhum.</p>
-    <ul class="rules">
-      <li>Cada etiqueta fica colada na sua DANFE, sempre na mesma ordem do original</li>
-      <li>Nenhuma página é alterada, só a ordem dos pedidos</li>
-      <li>Conferência pedido a pedido no arquivo novo</li>
-      <li>O arquivo original fica intacto</li>
-    </ul>
+    <p class="lede">Solte o PDF da Shopee ou do TikTok. O sistema ordena por SKU e confere cada etiqueta com a sua DANFE.</p>
   </header>
 
   <label class="drop" id="drop">
     <input type="file" id="arquivo" accept="application/pdf,.pdf" multiple>
     <strong>Solte o PDF aqui</strong>
-    <small>ou clique para escolher · pode mandar vários de uma vez</small>
+    <small>ou clique para escolher</small>
   </label>
 
   <section class="results" id="results" aria-live="polite"></section>
 
-  <footer>Formatos reconhecidos: Shopee (etiqueta → DANFE, conferido pelo SKU) e TikTok Shop com iMile (DANFE → etiqueta, conferido pela chave de acesso). Se algum par não bater, o PDF não é gerado e a página mostra quais pedidos conferir. SKUs novos entram sozinhos: o sistema lê qualquer SKU no formato PARTE-PARTE, acha o tamanho (30 a 48) e agrupa o resto como modelo e cor. Um SKU fora desse formato vai para o fim do arquivo, ainda junto da sua etiqueta.</footer>
+  <footer>O PDF não sai deste computador. Nenhuma página é alterada, só a ordem dos pedidos.</footer>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -494,16 +506,16 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
 
   function blocoEmbalagem(r) {
     const lista = r.conferencia.filter(c => c.unidades > 1 || c.qtdDivergente || ((c.unidades === null || c.unidades === undefined) && c.skus.length));
-    if (!lista.length) return '<div class="emb ok-emb"><b>Todos os pedidos têm 1 unidade.</b></div>';
+    if (!lista.length) return '';
     const linhas = lista.map(c => {
-      let motivo;
-      if (c.qtdDivergente) motivo = `<span class="pill bad">A DANFE diz ${c.unidades} e a etiqueta diz ${c.qtdEtiqueta}. Confira antes de embalar.</span>`;
-      else if (c.unidades === null || c.unidades === undefined) motivo = '<span class="pill warn">Não consegui ler a quantidade. Confira na DANFE.</span>';
-      else if (c.itens.some(it => it.qtd > 1)) motivo = `<span class="pill tape">Mesmo SKU repetido</span>`;
-      else motivo = `<span class="pill tape">SKUs diferentes</span>`;
-      return `<li><div class="emb-top"><b>Pedido ${c.pedido}</b><span class="pg">págs. ${c.novas.join(' e ')}</span>${c.unidades ? `<span class="qtd big">${c.unidades} unidades</span>` : ''}${motivo}</div><div class="emb-itens">${itensTexto(c)}</div></li>`;
+      let qtd;
+      if (c.qtdDivergente) qtd = `<span class="err">DANFE diz ${c.unidades}, etiqueta diz ${c.qtdEtiqueta}</span>`;
+      else if (c.unidades === null || c.unidades === undefined) qtd = '<span class="err">quantidade não lida, confira na DANFE</span>';
+      else qtd = `<span class="qtd">${c.unidades} unidades</span>`;
+      const itens = (c.itens || []).map(it => `${esc(it.sku)}${it.qtd > 1 ? ` <b>×${it.qtd}</b>` : ''}`).join(', ');
+      return `<li><b>Pedido ${c.pedido}</b> ${qtd}<small>${itens}</small></li>`;
     }).join('');
-    return `<div class="emb"><h3>Atenção na embalagem: ${lista.length} pedido${lista.length > 1 ? 's' : ''} com mais de 1 unidade</h3><p>Marque essas etiquetas ao imprimir. A quantidade fica escrita só na DANFE e passa despercebida fácil.</p><ul>${linhas}</ul></div>`;
+    return `<div class="emb"><h3>Atenção: ${lista.length} pedido${lista.length > 1 ? 's' : ''} com mais de 1 unidade</h3><ul>${linhas}</ul></div>`;
   }
 
   function blocoConferencia(r) {
@@ -513,11 +525,7 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
     const ruins = conf.filter(c => !c.ok).length;
     const linhas = conf.map(c => `<tr class="${c.ok ? (c.unidades > 1 || c.qtdDivergente ? 'row-mult' : '') : 'row-bad'}"><td class="num">${c.pedido}</td><td class="pg">${c.novas.join(' + ')}</td><td class="pg">${c.originais.join(' + ')}</td><td class="sku">${itensTexto(c)}</td><td class="num">${qtdPill(c)}</td><td>${provaTexto(c)}${c.mesmoPar ? '' : '<br><b>Páginas diferentes das originais</b>'}</td><td>${statusConf(c)}</td></tr>`).join('');
     return `<div class="conf">
-      <div class="conf-head">
-        <h2>Conferência pedido a pedido</h2>
-        <p>O sistema abriu o PDF <b>novo</b> e conferiu cada pedido de novo: a DANFE e a etiqueta são as mesmas páginas do original, uma colada na outra, na mesma ordem.</p>
-        <div class="tally"><span class="pill ok">✓ ${okN} conferidos</span>${mao ? `<span class="pill warn">${mao} para conferir à mão</span>` : ''}${ruins ? `<span class="pill bad">✗ ${ruins} com erro</span>` : ''}</div>
-      </div>
+      <p class="conf-note">Cada pedido foi conferido no PDF novo: a DANFE e a etiqueta são as mesmas páginas do original, uma colada na outra.</p>
       <div class="actions">
         <button class="ghost" type="button" data-acao="paginas">Ver as páginas lado a lado</button>
         <button class="ghost" type="button" data-acao="csv">Baixar conferência (.csv)</button>
@@ -566,38 +574,36 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
   function nomeSaida(r) { return `etiquetas_${r.plataforma}_ordenadas_por_SKU.pdf`; }
 
   function render(card, r, arquivo, exemplo) {
-    const chip = exemplo ? '<span class="chip ex">Exemplo</span>' : (r.plataforma ? `<span class="chip">${NOME_PLAT[r.plataforma]}</span>` : '');
+    const chip = r.plataforma ? `<span class="chip">${NOME_PLAT[r.plataforma]}</span>` : '';
     let html = `<div class="label-head"><span class="file">${esc(arquivo)}</span>${chip}</div>`;
 
     if (r.erros && r.erros.length) {
-      html += `<div><ul class="notes">${r.erros.map(e => `<li class="bad">${esc(e)}</li>`).join('')}</ul></div>`;
+      html += `<div class="verdict bad"><span class="tick">✗</span><div><b>Não deu para ordenar este arquivo</b><span>${r.erros.map(esc).join(' ')}</span></div></div>`;
       card.innerHTML = html; return;
     }
     if (r.paresRuins.length) {
-      html += `<div class="checks">${check(true, r.blocos.length, 'pedidos no arquivo')}${check(false, r.paresRuins.length, 'pares que não batem')}</div>`;
-      html += `<div><ul class="notes">${r.paresRuins.map(b => `<li class="bad">Páginas ${b.pages[0] + 1} e ${b.pages[1] + 1}: a etiqueta não corresponde à DANFE${b.skus.length ? ` (SKU <code>${esc(b.skus.join(', '))}</code>)` : ''}.</li>`).join('')}</ul></div>`;
-      html += `<div class="status bad">Nada foi gerado. Confira esses pedidos no arquivo original e envie de novo.</div>`;
+      html += `<div class="verdict bad"><span class="tick">✗</span><div><b>${r.paresRuins.length} etiqueta${r.paresRuins.length > 1 ? 's' : ''} não bate${r.paresRuins.length > 1 ? 'm' : ''} com a DANFE</b><span>Nada foi gerado. Confira no arquivo original e envie de novo.</span></div></div>`;
+      html += `<div><ul class="notes">${r.paresRuins.map(b => `<li class="bad">Páginas ${b.pages[0] + 1} e ${b.pages[1] + 1}${b.skus.length ? ` · <code>${esc(b.skus.join(', '))}</code>` : ''}</li>`).join('')}</ul></div>`;
       card.innerHTML = html; return;
     }
 
     const seguro = r.paginasIntactas && r.paresNaSaidaOk;
-    html += `<div class="checks">${check(true, r.blocos.length, 'pedidos ordenados')}${check(r.paginasIntactas, r.paginasIntactas ? 'OK' : 'ERRO', `${r.paginas} páginas intactas`)}${check(r.paresNaSaidaOk, r.paresNaSaidaOk ? 'OK' : 'ERRO', 'pares etiqueta + DANFE')}</div>`;
+    const mao = r.conferencia.filter(c => c.ok && c.semConferencia && !c.prova).length;
+    if (seguro) {
+      html += `<div class="verdict ok"><span class="tick">✓</span><div><b>${r.blocos.length} pedido${r.blocos.length > 1 ? 's' : ''} ordenado${r.blocos.length > 1 ? 's' : ''} e conferido${r.blocos.length > 1 ? 's' : ''}</b><span>Cada etiqueta está junto da sua DANFE.</span></div></div>`;
+    } else {
+      html += `<div class="verdict bad"><span class="tick">✗</span><div><b>A conferência falhou</b><span>O download foi bloqueado. Use o arquivo original e avise quem cuida do sistema.</span></div></div>`;
+    }
+
+    html += blocoEmbalagem(r);
 
     const avisos = [];
-    if (!seguro) avisos.push(`<li class="bad">A conferência final falhou, então o download foi bloqueado. Use o arquivo original e avise quem cuida do sistema.</li>`);
-    if (r.formatoMisto) avisos.push(`<li>O arquivo mistura a ordem Shopee (etiqueta → DANFE) com a do TikTok (DANFE → etiqueta). Os pares foram conferidos um a um.</li>`);
-    const varios = r.ordenados.filter(b => b.skus.length > 1);
-    if (varios.length) avisos.push(`<li>${varios.length > 1 ? varios.length + ' pedidos com vários SKUs foram ordenados' : '1 pedido com vários SKUs foi ordenado'} pelo primeiro SKU da DANFE.</li>`);
-    const sem = r.ordenados.filter(b => !b.skus.length);
-    if (sem.length) avisos.push(`<li>${sem.length} pedido${sem.length > 1 ? 's' : ''} sem SKU na DANFE, no fim do arquivo: ${sem.map(b => esc(b.descricao || 'sem descrição')).join('; ')}</li>`);
-    if (r.conferencia) html += blocoEmbalagem(r);
+    if (mao) avisos.push(`<li>${mao} pedido${mao > 1 ? 's' : ''} sem SKU foi para o fim do arquivo. Confira à mão.</li>`);
     if (avisos.length) html += `<div><ul class="notes">${avisos.join('')}</ul></div>`;
 
-    if (seguro) {
-      html += `<div class="actions"><button class="primary" type="button">Baixar ${esc(nomeSaida(r))}</button><span class="status" data-st="pdf"></span></div>`;
-    }
-    if (r.conferencia) html += blocoConferencia(r);
-    html += `<details class="resumo"><summary>Resumo por modelo e tamanho</summary>${tabela(r.ordenados)}</details>`;
+    if (seguro) html += `<div class="actions"><button class="primary" type="button">Baixar PDF ordenado</button><span class="status" data-st="pdf"></span></div>`;
+
+    html += `<details class="mais"><summary>Ver conferência completa</summary>${blocoConferencia(r)}<details class="resumo"><summary>Resumo por modelo e tamanho</summary>${tabela(r.ordenados)}</details></details>`;
     card.innerHTML = html;
 
     const btn = card.querySelector('button.primary');
@@ -605,11 +611,6 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
     const stConf = card.querySelector('[data-st="conf"]');
     const btnPag = card.querySelector('[data-acao="paginas"]');
     const btnCsv = card.querySelector('[data-acao="csv"]');
-    if (exemplo) {
-      [btn, btnPag, btnCsv].forEach(b => b && (b.disabled = true));
-      if (stPdf) stPdf.textContent = 'Exemplo: envie um PDF para baixar o arquivo ordenado.';
-      return;
-    }
     if (btnPag) btnPag.addEventListener('click', () => {
       const box = card.querySelector('.thumbs');
       if (!box.hidden && box.dataset.pronto) { box.hidden = true; btnPag.textContent = 'Ver as páginas lado a lado'; return; }
@@ -642,11 +643,10 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
     st.className = 'status ok'; st.textContent = 'Arquivo baixado.';
   }
 
-  let contador = 0, temExemplo = true;
+  let contador = 0;
   async function processar(files) {
     const pdfs = [...files].filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     if (!pdfs.length) return;
-    if (temExemplo) { $('#results').innerHTML = ''; temExemplo = false; }
     for (const f of pdfs) {
       const card = document.createElement('article');
       card.className = 'label'; card.id = 'r' + (++contador);
@@ -671,14 +671,5 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg) {
   ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, () => drop.classList.remove('over')));
   drop.addEventListener('drop', e => { e.preventDefault(); processar(e.dataTransfer.files); });
 
-  /* Exemplo inicial (dados fictícios) */
-  const ex = [['171-PRETO', 37, ['171-PRETO-37', '7000-PRETO-40']], ['7000-BRANCO', 36, ['7000-BRANCO-36']], ['7000-BRANCO', 38, ['7000-BRANCO-38']], ['7000-BRANCO', 38, ['7000-BRANCO-38']], ['KIT-2-171-PRETO-CINZA', 40, ['KIT-2-171-PRETO-CINZA-40+GORG-CAT-REL']], ['MOC-CAM-PRETO', 35, ['MOC-CAM-35-PRETO']], ['MOC-CAM-PRETO', 39, ['MOC-CAM-39-PRETO']]]
-    .map(([m, t, s], i) => ({ key: [0, m, t, i], skus: s, pages: [2 * i, 2 * i + 1] }));
-  const card = document.createElement('article'); card.className = 'label'; card.id = 'ex';
-  $('#results').append(card);
-  const exOrig = [11, 7, 1, 13, 5, 3, 9];
-  const exQ = [[1, 1], [1], [2], [1], [1], [1], [3]];
-  const exConf = ex.map((b, i) => ({ itens: b.skus.map((s, k) => ({ sku: s, qtd: exQ[i][k] })), unidades: exQ[i].reduce((a, x) => a + x, 0), qtdEtiqueta: exQ[i].reduce((a, x) => a + x, 0), pedido: i + 1, novas: [2 * i + 1, 2 * i + 2], originais: [exOrig[i], exOrig[i] + 1], skus: b.skus, chave: '35261012345678000190550010000123451' + String(100000000 + i * 7919).slice(-9), prova: 'chave', danfePrimeiro: true, ok: true, mesmoPar: true }));
-  render(card, { erros: [], plataforma: 'tiktok', blocos: ex, ordenados: ex, paresRuins: [], paginas: 14, paginasIntactas: true, paresNaSaidaOk: true, conferencia: exConf }, 'exemplo_tiktok.pdf', true);
 })();
 </script>
