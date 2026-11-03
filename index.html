@@ -175,7 +175,7 @@ details.mais > summary:focus-visible { outline: 3px solid var(--tape); outline-o
 
   <section class="results" id="results" aria-live="polite"></section>
 
-  <footer>O PDF não sai deste computador. Só muda a ordem dos pedidos; a DANFE dos pedidos com mais de 1 item ganha um X grande.</footer>
+  <footer>O PDF não sai deste computador. Só muda a ordem dos pedidos; a DANFE dos pedidos com mais de 1 item ganha um X logo abaixo dos itens.</footer>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -497,12 +497,14 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg, opts = {}) {
   r.docSaida = doc2;
   r.saida = saida;
 
-  // Depois de tudo conferido: X grande na DANFE dos pedidos com mais de 1 unidade
+  // Depois de tudo conferido: X no espaço abaixo dos itens da DANFE dos pedidos com mais de 1 unidade
   const marcar = r.conferencia.filter(c => c.unidades > 1).map(c => (c.danfePrimeiro ? c.novas[0] : c.novas[1]) - 1);
   r.paginasComX = marcar.length;
   if (r.paresNaSaidaOk && marcar.length) {
     onProg && onProg('Marcando com X os pedidos com mais de 1 item');
-    const comX = await marcarX(PDFLib, saida.slice(), marcar);
+    const areas = [];
+    for (const i of marcar) { let a = null; try { a = await areaAbaixoDosItens(doc2, i); } catch (e) { a = null; } areas.push(a); }
+    const comX = await marcarX(PDFLib, saida.slice(), marcar, areas);
     // Confere: mesmas páginas, e as que não levaram X continuam idênticas
     const docX = await PDFLib.PDFDocument.load(comX.slice());
     const sigX = await assinaturas(PDFLib, docX);
@@ -515,18 +517,66 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg, opts = {}) {
   return r;
 }
 
-/* Desenha um X de canto a canto por cima da página (o conteúdo original não é mexido). */
-async function marcarX(PDFLib, bytes, paginas) {
+/* Acha o espaço em branco logo abaixo da lista de itens da DANFE (coordenadas do PDF).
+   Volta null se não achar a lista de itens. */
+async function areaAbaixoDosItens(pdfjsDoc, idx) {
+  const page = await pdfjsDoc.getPage(idx + 1);
+  const tc = await page.getTextContent();
+  const its = tc.items.filter(it => 'str' in it && it.str.trim() !== '').map(it => ({
+    s: it.str, x: it.transform[4], y: it.transform[5], w: it.width || 0,
+    h: Math.max(it.height || 0, Math.hypot(it.transform[2], it.transform[3])) || 6,
+  }));
+  its.sort((a, b) => b.y - a.y || a.x - b.x);
+  const linhas = [];
+  for (const it of its) {
+    const l = linhas[linhas.length - 1];
+    if (l && Math.abs(l.y - it.y) < 2.5) l.items.push(it); else linhas.push({ y: it.y, items: [it] });
+  }
+  for (const l of linhas) {
+    l.items.sort((a, b) => a.x - b.x);
+    l.txt = norm(l.items.map(i => i.s).join(' ').replace(/\s+/g, ' ').trim());
+    l.x0 = Math.min(...l.items.map(i => i.x));
+    l.x1 = Math.max(...l.items.map(i => i.x + i.w));
+    l.h = Math.max(...l.items.map(i => i.h));
+    l.topo = l.y + l.h;
+    l.base = Math.min(...l.items.map(i => i.y)) - l.h * 0.25;
+  }
+  const iCab = linhas.findIndex(l => /DESCRI[ÇC][ÃA]O/i.test(l.txt));
+  if (iCab < 0) return null;
+  const ehItem = l => QTD_RE.test(l.txt) || l.txt.split(' ').some(t => SKU_RE.test(t) && /[A-Za-z]/.test(t));
+  let iUlt = -1;
+  for (let k = iCab + 1; k < linhas.length; k++) if (ehItem(linhas[k])) iUlt = k;
+  if (iUlt < 0) return null;
+  // Linhas coladas logo depois do último item (continuação da descrição) ainda são do item
+  const passo = linhas[iUlt].h * 1.8;
+  while (iUlt + 1 < linhas.length && linhas[iUlt].base - linhas[iUlt + 1].topo < passo * 0.6 && !/^(DADOS|INFORMA|VALOR|TOTAL|RESERVADO|CALCULO|CÁLCULO|OBS)/i.test(linhas[iUlt + 1].txt) && linhas[iUlt + 1].x0 > linhas[iCab].x0 - 5) iUlt++;
+  const tabela = linhas.slice(iCab, iUlt + 1);
+  let x0 = Math.min(...tabela.map(l => l.x0)), x1 = Math.max(...tabela.map(l => l.x1));
+  const cb = page.view; // [x0, y0, x1, y1]
+  if (x1 - x0 < 60) { x0 = cb[0] + 10; x1 = cb[2] - 10; }
+  const topo = linhas[iUlt].base - 5;
+  const prox = linhas[iUlt + 1];
+  let fundo = prox ? prox.topo + 5 : cb[1] + 8;
+  if (topo - fundo < 30) fundo = Math.max(cb[1] + 4, topo - 40); // pouco espaço: X pequeno logo abaixo
+  let h = topo - fundo;
+  if (h > (x1 - x0)) h = x1 - x0; // não deixa o X esticar demais
+  page.cleanup && page.cleanup();
+  return { x: x0, y: topo - h, w: x1 - x0, h };
+}
+
+/* Desenha um X por cima do espaço abaixo dos itens (o conteúdo original não é mexido).
+   Se não achar a lista de itens, faz o X na página toda para o alerta não sumir. */
+async function marcarX(PDFLib, bytes, paginas, areas = []) {
   const doc = await PDFLib.PDFDocument.load(bytes, { updateMetadata: false });
   const pages = doc.getPages();
-  for (const i of paginas) {
+  paginas.forEach((i, k) => {
     const pg = pages[i];
-    const { x, y, width: w, height: h } = pg.getCropBox();
-    const esp = Math.max(6, Math.min(w, h) * 0.025);
-    const estilo = { thickness: esp, color: PDFLib.rgb(0, 0, 0), opacity: 0.55 };
-    pg.drawLine({ start: { x, y }, end: { x: x + w, y: y + h }, ...estilo });
-    pg.drawLine({ start: { x, y: y + h }, end: { x: x + w, y }, ...estilo });
-  }
+    const a = areas[k] || (() => { const c = pg.getCropBox(); return { x: c.x, y: c.y, w: c.width, h: c.height }; })();
+    const esp = Math.max(3, Math.min(8, Math.min(a.w, a.h) * 0.06));
+    const estilo = { thickness: esp, color: PDFLib.rgb(0, 0, 0), opacity: 0.8 };
+    pg.drawLine({ start: { x: a.x, y: a.y }, end: { x: a.x + a.w, y: a.y + a.h }, ...estilo });
+    pg.drawLine({ start: { x: a.x, y: a.y + a.h }, end: { x: a.x + a.w, y: a.y }, ...estilo });
+  });
   return await doc.save();
 }
 
@@ -702,7 +752,7 @@ async function marcarX(PDFLib, bytes, paginas) {
     const seguro = r.paginasIntactas && r.paresNaSaidaOk;
     const mao = r.conferencia.filter(c => c.ok && ((c.semConferencia && !c.prova) || c.naoLido)).length;
     if (seguro) {
-      html += `<div class="verdict ok"><span class="tick">✓</span><div><b>${r.blocos.length} pedido${r.blocos.length > 1 ? 's' : ''} ordenado${r.blocos.length > 1 ? 's' : ''} e conferido${r.blocos.length > 1 ? 's' : ''}</b><span>Cada etiqueta está junto da sua DANFE.${r.paginasComX ? ` ${r.paginasComX} DANFE${r.paginasComX > 1 ? 's' : ''} com mais de 1 item ${r.paginasComX > 1 ? 'receberam' : 'recebeu'} um X.` : ''}</span></div></div>`;
+      html += `<div class="verdict ok"><span class="tick">✓</span><div><b>${r.blocos.length} pedido${r.blocos.length > 1 ? 's' : ''} ordenado${r.blocos.length > 1 ? 's' : ''} e conferido${r.blocos.length > 1 ? 's' : ''}</b><span>Cada etiqueta está junto da sua DANFE.${r.paginasComX ? ` ${r.paginasComX} DANFE${r.paginasComX > 1 ? 's' : ''} com mais de 1 item ${r.paginasComX > 1 ? 'receberam' : 'recebeu'} um X abaixo dos itens.` : ''}</span></div></div>`;
     } else {
       html += `<div class="verdict bad"><span class="tick">✗</span><div><b>A conferência falhou</b><span>O download foi bloqueado. Use o arquivo original e avise quem cuida do sistema.</span></div></div>`;
     }
