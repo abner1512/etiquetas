@@ -175,7 +175,7 @@ details.mais > summary:focus-visible { outline: 3px solid var(--tape); outline-o
 
   <section class="results" id="results" aria-live="polite"></section>
 
-  <footer>O PDF não sai deste computador. Nenhuma página é alterada, só a ordem dos pedidos.</footer>
+  <footer>O PDF não sai deste computador. Só muda a ordem dos pedidos; a DANFE dos pedidos com mais de 1 item ganha um X grande.</footer>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -496,7 +496,38 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg, opts = {}) {
   r.paresNaSaidaOk = saidaOk && r.conferencia.every(c => c.ok);
   r.docSaida = doc2;
   r.saida = saida;
+
+  // Depois de tudo conferido: X grande na DANFE dos pedidos com mais de 1 unidade
+  const marcar = r.conferencia.filter(c => c.unidades > 1).map(c => (c.danfePrimeiro ? c.novas[0] : c.novas[1]) - 1);
+  r.paginasComX = marcar.length;
+  if (r.paresNaSaidaOk && marcar.length) {
+    onProg && onProg('Marcando com X os pedidos com mais de 1 item');
+    const comX = await marcarX(PDFLib, saida.slice(), marcar);
+    // Confere: mesmas páginas, e as que não levaram X continuam idênticas
+    const docX = await PDFLib.PDFDocument.load(comX.slice());
+    const sigX = await assinaturas(PDFLib, docX);
+    const okX = sigX.length === sigOut.length && sigX.every((v, i) => marcar.includes(i) || v === sigOut[i]);
+    if (!okX) { r.paresNaSaidaOk = false; return r; }
+    try { doc2.destroy(); } catch (e) {}
+    r.docSaida = await pdfjsLib.getDocument({ data: comX.slice() }).promise;
+    r.saida = comX;
+  }
   return r;
+}
+
+/* Desenha um X de canto a canto por cima da página (o conteúdo original não é mexido). */
+async function marcarX(PDFLib, bytes, paginas) {
+  const doc = await PDFLib.PDFDocument.load(bytes, { updateMetadata: false });
+  const pages = doc.getPages();
+  for (const i of paginas) {
+    const pg = pages[i];
+    const { x, y, width: w, height: h } = pg.getCropBox();
+    const esp = Math.max(6, Math.min(w, h) * 0.025);
+    const estilo = { thickness: esp, color: PDFLib.rgb(0, 0, 0), opacity: 0.55 };
+    pg.drawLine({ start: { x, y }, end: { x: x + w, y: y + h }, ...estilo });
+    pg.drawLine({ start: { x, y: y + h }, end: { x: x + w, y }, ...estilo });
+  }
+  return await doc.save();
 }
 
 
@@ -671,7 +702,7 @@ async function processarArquivo(pdfjsLib, PDFLib, bytes, onProg, opts = {}) {
     const seguro = r.paginasIntactas && r.paresNaSaidaOk;
     const mao = r.conferencia.filter(c => c.ok && ((c.semConferencia && !c.prova) || c.naoLido)).length;
     if (seguro) {
-      html += `<div class="verdict ok"><span class="tick">✓</span><div><b>${r.blocos.length} pedido${r.blocos.length > 1 ? 's' : ''} ordenado${r.blocos.length > 1 ? 's' : ''} e conferido${r.blocos.length > 1 ? 's' : ''}</b><span>Cada etiqueta está junto da sua DANFE.</span></div></div>`;
+      html += `<div class="verdict ok"><span class="tick">✓</span><div><b>${r.blocos.length} pedido${r.blocos.length > 1 ? 's' : ''} ordenado${r.blocos.length > 1 ? 's' : ''} e conferido${r.blocos.length > 1 ? 's' : ''}</b><span>Cada etiqueta está junto da sua DANFE.${r.paginasComX ? ` ${r.paginasComX} DANFE${r.paginasComX > 1 ? 's' : ''} com mais de 1 item ${r.paginasComX > 1 ? 'receberam' : 'recebeu'} um X.` : ''}</span></div></div>`;
     } else {
       html += `<div class="verdict bad"><span class="tick">✗</span><div><b>A conferência falhou</b><span>O download foi bloqueado. Use o arquivo original e avise quem cuida do sistema.</span></div></div>`;
     }
